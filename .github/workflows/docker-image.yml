@@ -168,12 +168,12 @@ jobs:
           name: model-artifacts
           path: artifacts
 
-      - name: � Convert repository name to lowercase
+      - name: 🔤 Convert repository name to lowercase
         id: repo-lowercase
         run: |
           echo "repository=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
-      - name: �📝 Create inference Dockerfile (CPU)
+      - name: 📝 Create inference Dockerfile (CPU)
         run: |
           mkdir -p docker
           cat > docker/Inference.Dockerfile <<'EOF'
@@ -192,7 +192,8 @@ jobs:
               pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt && \
               pip install --no-cache-dir soundfile==0.12.1
           COPY app.py model_utils.py ./
-          COPY templates/ ./templates/
+          # Копіюємо templates (якщо існує в контексті)
+          COPY templates ./templates 2>/dev/null || mkdir -p ./templates
           # Копіюємо натреновану модель у образ
           COPY artifacts/model_state_dict.pt ./model_state_dict.pt
           # Запуск Flask API
@@ -252,12 +253,12 @@ jobs:
           name: model-artifacts
           path: artifacts
 
-      - name: � Convert repository name to lowercase
+      - name: 🔤 Convert repository name to lowercase
         id: repo-lowercase
         run: |
           echo "repository=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
-      - name: �🔽 Pull image (if pushed)
+      - name: 🔽 Pull image (if pushed)
         if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
         run: |
           docker pull ${{ env.REGISTRY }}/${{ steps.repo-lowercase.outputs.repository }}:${{ env.INFER_TAG }}
@@ -274,7 +275,29 @@ jobs:
             IMAGE=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '${{ env.IMAGE_NAME }}' | head -n1)
           fi
           mkdir -p metrics
-          docker run --rm -v "$PWD/metrics:/metrics" "$IMAGE" bash -lc "python - <<'PY' \nimport json, csv, torch\nfrom pathlib import Path\nfrom model_utils import SmallCNN\nmodel = SmallCNN(n_classes=4)\nmodel.load_state_dict(torch.load('model_state_dict.pt', map_location='cpu'))\nmodel.eval()\nexample = torch.randn(1,1,64,32)\n# warmup\nfor _ in range(3):\n    _ = model(example)\nimport time\nN=30\nt=[]\nwith torch.no_grad():\n    for _ in range(N):\n        s=time.time(); _=model(example); e=time.time(); t.append((e-s)*1000)\nlat_ms=sum(t)/len(t)\nPath('/metrics/metrics.json').write_text(json.dumps({'latency_ms':lat_ms,'runs':N}, indent=2))\nwith open('/metrics/metrics.csv','w',newline='') as f:\n    w=csv.writer(f); w.writerow(['metric','value']); w.writerow(['latency_ms',lat_ms])\nprint('Latency (ms):',lat_ms)\nPY"
+          docker run --rm -v "$PWD/metrics:/metrics" "$IMAGE" bash -lc "python - <<'PY' 
+          import json, csv, torch
+          from pathlib import Path
+          from model_utils import SmallCNN
+          model = SmallCNN(n_classes=4)
+          model.load_state_dict(torch.load('model_state_dict.pt', map_location='cpu'))
+          model.eval()
+          example = torch.randn(1,1,64,32)
+          # warmup
+          for _ in range(3):
+              _ = model(example)
+          import time
+          N=30
+          t=[]
+          with torch.no_grad():
+              for _ in range(N):
+                  s=time.time(); _=model(example); e=time.time(); t.append((e-s)*1000)
+          lat_ms=sum(t)/len(t)
+          Path('/metrics/metrics.json').write_text(json.dumps({'latency_ms':lat_ms,'runs':N}, indent=2))
+          with open('/metrics/metrics.csv','w',newline='') as f:
+              w=csv.writer(f); w.writerow(['metric','value']); w.writerow(['latency_ms',lat_ms])
+          print('Latency (ms):',lat_ms)
+          PY"
 
       - name: 📦 Upload metrics artifacts
         uses: actions/upload-artifact@v4
@@ -283,4 +306,3 @@ jobs:
           path: metrics
 
 # Примітка: щоб блокувати merge в master/main при падінні пайплайну, ввімкніть Branch protection rules і додайте обов'язковий статус чек цього workflow.
-
